@@ -9,7 +9,7 @@
     {
       "name": "ordinance-kit",
       "source": "./ordinance-kit",
-      "description": "조례안 하나로 완성본(의안)·표준 입안서식·입법예고 의뢰서·발의의원 서명부 4종 HWPX 일괄 생성 (Windows + 한/글 필요)"
+      "description": "조례안 하나로 완성본(의안)·표준 입안서식·입법예고 의뢰서·발의의원 서명부 4종 HWPX 일괄 생성. 개정조례는 현행 조례를 API로 받아 신·구조문 대비표까지 자동 생성 (Windows + 한/글 필요)"
     }
   ]
 }

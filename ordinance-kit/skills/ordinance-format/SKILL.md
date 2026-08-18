@@ -57,7 +57,7 @@ python scripts/build_ordinance.py spec.json
 
 ```json
 {
-  "output": "출력폴더/○○_조례안.hwpx",
+  "output": "출력폴더\\경기도_○○_조례안.hwpx",
   "title": "경기도 ○○ 지원 조례안",
   "promulgation_line": "경기도조례  제        호",
   "body": [
@@ -100,6 +100,6 @@ python scripts/build_ordinance.py spec.json
   신명조는 이 PC에 TTF로 존재함(header.xml에 `신명조 TTF`로 등록되는지 확인).
 - COM `Open`/`SaveAs`는 실패해도 예외 없이 False만 반환 — 반환값을 반드시 검사.
 - `Indentation` 음수 = 내어쓰기, 단위는 hwpunit(pt×100). `AlignType` 3 = 가운데.
-- 출력 경로를 지정받지 못하면 환경변수 `ORDINANCE_OUT_DIR`, 없으면 현재 폴더에 저장.
+- 출력 경로를 지정받지 못하면 `출력폴더`에 저장.
 - 조문 내용의 기획·작성·검토가 필요하면 ordinance-draft / ordinance-review로
   넘기고, 이 스킬은 완성된 조문의 서식 조판만 담당한다.

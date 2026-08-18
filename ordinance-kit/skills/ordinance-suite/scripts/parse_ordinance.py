@@ -100,7 +100,7 @@ def parse(path, overrides):
         title = next((l.strip() for l in lines if l.strip().endswith("조례안")), "")
     if not title:
         title = os.path.splitext(os.path.basename(path))[0]
-        unknown.append("조례명(파일명에서 추정)")
+        unknown.append("조례명")
     spec["조례명"] = re.sub(r"[「」]", "", title)
 
     # ── 유형 · 공포기관 ───────────────────────────────────────────
@@ -117,7 +117,7 @@ def parse(path, overrides):
         spec["대표발의"] = m.group(1).strip()
     else:
         spec["대표발의"] = ""
-        unknown.append("대표발의 의원")
+        unknown.append("대표발의")
     m = re.search(r"발의연월일\s*[:：]\s*([0-9]{2,4}\s*년[^발]*?)(?=발|$)", txt)
     spec["발의연월일"] = m.group(1).strip() if m else "    년    월    일"
     m = re.search(r"발\s*의\s*자\s*[:：]\s*(.+)", txt)
@@ -159,18 +159,20 @@ def parse(path, overrides):
     spec.setdefault("공고번호", "제    -    호")
     spec.setdefault("공고일", "    .   .   .")
     spec.setdefault("제출기한", "    년   월   일(  )까지")
-    spec.setdefault("문의처", "")
+    spec.setdefault("문의처", "의정지원과 031)8008-0000")
     spec.setdefault("관계법령", [])
     spec.setdefault("공동발의", [])
-    for k in ("소관위원회", "공고번호", "공고일", "제출기한", "문의처"):
+    for k in ("소관위원회", "공고번호", "공고일", "제출기한"):
         if not spec[k] or "    " in str(spec[k]):
             unknown.append(k)
     if not spec["관계법령"]:
-        unknown.append("관계법령 발췌(입법예고 참고자료)")
+        unknown.append("관계법령")
     if not spec["공동발의"]:
-        unknown.append("공동발의 의원 명단(서명부)")
+        unknown.append("공동발의")
 
     spec.update(overrides)
+    # 표시 라벨이 아니라 **스펙 키** 를 담는다 — 나중에 값이 채워졌는지
+    # 그대로 대조할 수 있어야 한다(라벨을 담으면 키와 안 맞아 오보고된다).
     spec["_미확정"] = unknown
     spec["_원본"] = os.path.abspath(path)
     return spec

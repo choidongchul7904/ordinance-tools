@@ -58,10 +58,9 @@ def guard(text, where):
         return ""
     return text
 
-NOTICE = (" {의회} {위원회} {의원} 의원이 추진 중인 「{조례명}」을 {의회} "
-          "법제사무처리 지침에 따라 그 취지와 내용을 미리 알려 주민 여러분의 의견을 "
+NOTICE = (" 경기도의회 {위원회} {의원} 의원이 추진 중인 「{조례명}」을 경기도의회 "
+          "법제사무처리 지침에 따라 그 취지와 내용을 미리 알려 도민 여러분의 의견을 "
           "듣고자 다음과 같이 입법예고 합니다.")
-DEFAULT_COUNCIL = "경기도의회"          # 서식 배포 기관. 타 의회는 spec의 `의회명`으로 바꾼다
 
 # 문단 인덱스 맵 — references/template-spec*.md 의 실측값
 MAP = {
@@ -252,17 +251,15 @@ def build(spec, kind, stage):
     org = spec.get("공포기관", "경기도")
     gaejeong = kind == "개정"
 
-    council = spec.get("의회명") or DEFAULT_COUNCIL
-    set_text(ps[m["공고번호"]], "%s 공고 %s" % (council, spec.get("공고번호", "제    -    호")))
-    set_text(ps[m["예고문"]], NOTICE.format(의회=council,
-                                            위원회=spec.get("소관위원회", "○○○위원회"),
+    set_text(ps[m["공고번호"]], "경기도의회 공고 %s" % spec.get("공고번호", "제    -    호"))
+    set_text(ps[m["예고문"]], NOTICE.format(위원회=spec.get("소관위원회", "○○○위원회"),
                                             의원=spec.get("대표발의", "○○○"),
                                             조례명=title))
     set_text(ps[m["공고일"]], spec.get("공고일", "    .   .   ."))
     set_text(ps[m["제목행"]], "「%s」" % title)
     set_text(ps[m["공포번호"]], "%s 조례 제    호" % org)
     set_text(ps[m["본문제목"]], "「%s」" % title)
-    set_text(ps[m["문의처"]], " ○ %s %s" % (council, spec.get("문의처") or "○○○과 000)0000-0000"))
+    set_text(ps[m["문의처"]], " ○ 경기도의회 %s" % spec.get("문의처", "의정지원과 031)8008-0000"))
     set_text(ps[m["제출기한"]], " 가. 제출기한 : %s" % spec.get("제출기한", "    년   월   일(  )까지"))
 
     # 서식 정본의 자리표시자가 제출본에 남지 않도록, 값이 없으면

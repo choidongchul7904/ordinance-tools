@@ -13,7 +13,8 @@ description: 지방의회 안건 서명부(발의의원 서명부) HWPX 작성 �
 
 ## 산출물
 
-- `{출력폴더}/발의의원 서명부_{안건명 축약}_{YYMMDD}.hwpx`
+- `출력폴더\발의의원 서명부_{안건명 축약}_{YYMMDD}.hwpx`
+  (별도 지시가 없으면 이 폴더)
 - 검증용 PDF 렌더는 스크래치패드에만 두고, 사용자에게는 최종 HWPX를 전달한다.
 
 ## 1단계 — 입력 수집
@@ -63,13 +64,13 @@ description: 지방의회 안건 서명부(발의의원 서명부) HWPX 작성 �
 2. 스테이징 HWPX 생성:
 
 ```bash
-python scripts/build_sheet.py cfg.json stage.hwpx
+python "scripts/build_sheet.py" cfg.json stage.hwpx
 ```
 
 3. 한/글 COM 정품 재저장 + 검증 PDF:
 
 ```bash
-python scripts/com_save.py stage.hwpx "출력폴더/발의의원 서명부_○○_260807.hwpx" verify.pdf
+python "scripts/com_save.py" stage.hwpx "출력폴더/발의의원 서명부_○○_260807.hwpx" verify.pdf
 ```
 
 `com_save.py` 없이 스테이징본을 그대로 전달하면 **한/글 보안수준 '높음'에서 변조

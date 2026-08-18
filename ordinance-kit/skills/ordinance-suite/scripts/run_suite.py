@@ -32,7 +32,13 @@ COM_SAVE = os.path.join(HERE, "com_save.py")
 
 JOBS = ["완성본", "표준서식", "입법예고", "서명부"]
 
-# 저장 폴더: 환경변수 ORDINANCE_OUT_DIR, 없으면 현재 폴더 (PC마다 경로가 다르므로)
+# `_미확정` 은 스펙 키 목록이다. 사람에게 보일 때만 설명을 붙인다.
+LABEL = {"관계법령": "관계법령 발췌(입법예고 참고자료)",
+         "공동발의": "공동발의 의원 명단(서명부)",
+         "소관위원회": "소관위원회(입법예고 예고문)",
+         "문의처": "문의처(입법예고)"}
+
+# 다른 PC에서도 동작하도록 — 지정 폴더가 없으면 현재 폴더에 저장한다
 DEFAULT_OUT = os.environ.get("ORDINANCE_OUT_DIR") or os.getcwd()
 
 
@@ -42,6 +48,51 @@ def sh(args, cwd=None):
     r = subprocess.run([str(x) for x in args], cwd=cwd, capture_output=True, env=env)
     out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
     return r.returncode, out.strip()
+
+
+# ── G3 센티널 게이트 ────────────────────────────────────────────────────────
+# 미완성 자리는 `[[TODO:…]]` 로 표시된다(fetch_current.py). 경고만 하면 언젠가
+# 무시되고 제출본에 그대로 나간다. 그래서 **해당 서식의 빌드를 실패시킨다**.
+TODO_MARK = "[[TODO:"
+# 서식별로 실제 사용하는 필드만 검사한다 — 쓰지도 않는 필드 때문에 막지 않기 위해서다
+TODO_FIELDS = {
+    "완성본": ("본칙", "부칙", "제안이유", "주요내용", "참고사항"),
+    "표준서식": ("본칙", "부칙"),
+    "입법예고": ("본칙", "부칙", "개정문", "대비표", "현행조례", "관계법령",
+                 "제안이유", "주요내용"),
+    "서명부": ("공동발의",),
+}
+
+
+def scan_todo(obj, path=""):
+    """spec 안의 [[TODO:…]] 위치를 전부 찾는다."""
+    hits = []
+    if isinstance(obj, str):
+        if TODO_MARK in obj:
+            hits.append((path, " ".join(obj.split())[:70]))
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            hits += scan_todo(v, "%s.%s" % (path, k) if path else str(k))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            hits += scan_todo(v, "%s[%d]" % (path, i))
+    return hits
+
+
+def todo_gate(spec, job, allow):
+    if allow:
+        return
+    hits = []
+    for f in TODO_FIELDS.get(job, ()):
+        if f in spec:
+            hits += scan_todo(spec[f], f)
+    if hits:
+        lines = ["미완성 표시 %d건 — 채운 뒤 다시 실행하십시오"
+                 " (초안 회람용이면 --allow-todo)." % len(hits)]
+        lines += ["    %s  %s" % (p, t) for p, t in hits[:6]]
+        if len(hits) > 6:
+            lines.append("    … 외 %d건" % (len(hits) - 6))
+        raise RuntimeError("\n".join(lines))
 
 
 def need(path, what):
@@ -147,6 +198,8 @@ def main():
     ap.add_argument("--outdir", default=DEFAULT_OUT)
     ap.add_argument("--only", default=",".join(JOBS))
     ap.add_argument("--pdf", action="store_true", help="검증용 PDF도 함께 생성")
+    ap.add_argument("--allow-todo", action="store_true",
+                    help="[[TODO:…]] 가 남아 있어도 빌드한다(초안 회람용)")
     ap.add_argument("--stamp", default=dt.date.today().strftime("%y%m%d"))
     a = ap.parse_args()
 
@@ -163,6 +216,7 @@ def main():
         pdf = os.path.join(work, job + ".pdf") if a.pdf else None
         print("\n───── %s → %s" % (job, names[job]), flush=True)
         try:
+            todo_gate(spec, job, a.allow_todo)
             log = RUNNERS[job](spec, work, out, pdf)
             print(log)
             results.append((job, "OK", out))
@@ -178,8 +232,22 @@ def main():
     for job, st, info in results:
         print(" %-6s %-4s %s" % (job, st, info))
     print(" 작업폴더: %s" % work)
-    if spec.get("_미확정"):
-        print(" 미확정(사용자 확인 필요): %s" % ", ".join(spec["_미확정"]))
+    if a.allow_todo and scan_todo(spec):
+        print(" !! --allow-todo 로 미완성 표시를 무시하고 빌드했습니다."
+              " 제출 전 [[TODO:…]] 를 반드시 채우십시오.")
+    # `_미확정` 은 파서가 만든 목록이라 사람이 채운 뒤에도 그대로 남는다.
+    # 실제 값이 비어 있는 항목만 골라 보고한다(다 채웠는데 미확정이라 하면 오보고다).
+    def unfilled(k):
+        v = spec.get(k)
+        if v in (None, "", [], {}):
+            return True
+        return isinstance(v, str) and (not v.strip() or "    " in v)
+
+    left = [LABEL.get(k, k) for k in spec.get("_미확정", []) if unfilled(k)]
+    if left:
+        print(" 미확정(사용자 확인 필요): %s" % ", ".join(left))
+    elif spec.get("_미확정"):
+        print(" 미확정 항목 없음 (파서가 표시한 %d건 모두 채워짐)" % len(spec["_미확정"]))
     sys.exit(1 if any(r[1] != "OK" for r in results) else 0)
 
 
