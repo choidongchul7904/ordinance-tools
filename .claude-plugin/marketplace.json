@@ -1,0 +1,15 @@
+{
+  "name": "ordinance-tools",
+  "owner": {
+    "name": "최동철",
+    "url": "https://github.com/choidongchul7904"
+  },
+  "description": "지방의회 조례안 발의 서류를 한글(HWPX)로 만들어 주는 플러그인 모음",
+  "plugins": [
+    {
+      "name": "ordinance-kit",
+      "source": "./ordinance-kit",
+      "description": "조례안 하나로 완성본(의안)·표준 입안서식·입법예고 의뢰서·발의의원 서명부 4종 HWPX 일괄 생성 (Windows + 한/글 필요)"
+    }
+  ]
+}

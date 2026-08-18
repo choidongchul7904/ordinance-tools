@@ -1,0 +1,10 @@
+{
+  "name": "ordinance-kit",
+  "description": "조례안 하나를 넣으면 발의에 필요한 한글(HWPX) 문서 4종 — 완성본(의안 서식)·표준 입안 서식·입법예고 의뢰서·발의의원 서명부 — 을 한 번에 만듭니다. Windows + 한/글(HWP) 설치 환경 전용.",
+  "version": "1.0.0",
+  "author": { "name": "최동철" },
+  "homepage": "https://github.com/choidongchul7904/ordinance-tools",
+  "repository": "https://github.com/choidongchul7904/ordinance-tools",
+  "license": "MIT",
+  "keywords": ["ordinance", "hwpx", "hangul", "korean-local-council", "조례", "한글", "지방의회"]
+}
