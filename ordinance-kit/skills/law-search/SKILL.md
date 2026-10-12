@@ -1,7 +1,10 @@
 ---
 name: law-search
-description: 국가법령정보센터 Open API(law.go.kr DRF)로 현행 법령·판례를 실시간 검색·본문조회하는 스킬. 법령명/키워드로 현행법령·시행일법령·판례·헌재결정례·법령해석례·행정규칙·자치법규를 찾고, 특정 법령의 조문 원문과 공포일자·시행일자·소관부처를 가져온다. 조례안 입안·검토에서 상위법 조문과 현행 조례를 실제 API로 확인해 허위 인용을 막는 데 쓰인다. ordinance-suite의 신·구조문 대비표도 이 스킬로 현행 조례 전문을 받아 만든다. 사용자가 "법령 검색", "현행 법령", "판례 검색", "법조문 확인", "○○법 조문", "시행일 확인", "국가법령정보", "law.go.kr", "법령 API", "판례 찾아줘" 를 언급하거나 조례안 작업 중 상위법·현행 조례 근거가 필요할 때 사용한다. OC(기관코드)는 환경변수 `LAW_OC` 로 지정한다(open.law.go.kr 에서 무료 발급).
+description: 국가법령정보센터 Open API(law.go.kr DRF)로 현행 법령·시행일법령·판례·헌재결정·해석례·행정규칙·자치법규(조례)를 실시간 검색하고 조문 원문·공포일·시행일·소관부처를 가져온다. 인용 전 현행성 확인과 허위 인용 방지, 개정조례 입법예고의 현행 조례 전문·신구대비표 원본 확보에 쓴다. OC는 환경변수 LAW_OC로 지정(미설정 시 exit 3 안내).
+when_to_use: '"현행 법령", "판례 검색", "법조문 확인", "○○법 조문", "시행일 확인", "국가법령정보", "law.go.kr", "법령 API", "판례 찾아줘", "현행 조례 전문"을 말하거나 법령·판례 근거의 현행성 확인이 필요할 때.'
+argument-hint: '[법령명 또는 키워드]'
 ---
+> 스킬 폴더: `${CLAUDE_SKILL_DIR}` — 본문의 `scripts/`·`references/`·`assets/` 상대경로는 이 폴더 기준이다.
 
 # law-search — 현행 법령·판례 검색 (국가법령정보 Open API)
 
@@ -11,11 +14,11 @@ description: 국가법령정보센터 Open API(law.go.kr DRF)로 현행 법령·
 
 ## 명령 (scripts/lawsearch.py)
 ```
-python scripts/lawsearch.py search --target law  --query "저작권법"     # 현행법령 검색
-python scripts/lawsearch.py search --target prec --query "저작권"        # 판례 검색
-python scripts/lawsearch.py law    --mst <법령일련번호> [--jo 25] [--jo 7의2]  # 법령 본문/특정 조문
-python scripts/lawsearch.py law --target ordin --mst <자치법규일련번호> [--jo 3]  # 조례·규칙 본문/조문
-python scripts/lawsearch.py prec   --id <판례일련번호>                    # 판례 본문
+python "${CLAUDE_SKILL_DIR}/scripts/lawsearch.py" search --target law  --query "저작권법"     # 현행법령 검색
+python "${CLAUDE_SKILL_DIR}/scripts/lawsearch.py" search --target prec --query "저작권"        # 판례 검색
+python "${CLAUDE_SKILL_DIR}/scripts/lawsearch.py" law    --mst <법령일련번호> [--jo 25] [--jo 7의2]  # 법령 본문/특정 조문
+python "${CLAUDE_SKILL_DIR}/scripts/lawsearch.py" law --target ordin --mst <자치법규일련번호> [--jo 3]  # 조례·규칙 본문/조문
+python "${CLAUDE_SKILL_DIR}/scripts/lawsearch.py" prec   --id <판례일련번호>                    # 판례 본문
 ```
 - `search` → `{total, results[]}`. 법령 결과: 법령명한글·법령ID·**법령일련번호(MST)**·공포일자·시행일자·소관부처명.
   판례 결과: 사건명·법원명·선고일자·사건번호·**판례일련번호**.

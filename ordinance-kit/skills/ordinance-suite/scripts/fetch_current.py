@@ -24,8 +24,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ordlaw  # noqa: E402
+from ordtype import TypeConflict, detect_type  # noqa: E402
 
-LAWSEARCH = Path.home() / ".claude" / "skills" / "law-search" / "scripts" / "lawsearch.py"
+import os  # noqa: E402
+
+# run_suite 와 같은 규칙: ORDINANCE_SKILLS_DIR 이 있으면 그 아래 law-search 를 쓴다
+_SKILLS = Path(os.environ.get("ORDINANCE_SKILLS_DIR")
+               or Path(__file__).resolve().parent.parent.parent)
+LAWSEARCH = _SKILLS / "law-search" / "scripts" / "lawsearch.py"
+if not LAWSEARCH.exists():
+    LAWSEARCH = Path.home() / ".claude" / "skills" / "law-search" / "scripts" / "lawsearch.py"
+TODO_FAIL = "[[TODO:적용실패"
 
 RE_JO_HEAD = re.compile(r"^\s*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?")
 RE_HEADING = re.compile(r"^\s*제\s*\d+\s*[장절관편](?:\s|$)")
@@ -45,8 +54,13 @@ TODO_AMD = "[[TODO:개정안조문]]"
 
 
 def call(args):
-    r = subprocess.run([sys.executable, str(LAWSEARCH)] + args,
-                       capture_output=True, timeout=90)
+    if not LAWSEARCH.exists():
+        return None, "law-search 스킬이 없습니다: %s" % LAWSEARCH
+    try:
+        r = subprocess.run([sys.executable, str(LAWSEARCH)] + args,
+                           capture_output=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return None, "국가법령정보센터 응답 시간 초과(90초) — 잠시 뒤 다시 실행하십시오"
     out = (r.stdout or b"").decode("utf-8", "replace").strip()
     try:
         data = json.loads(out) if out else None
@@ -70,7 +84,13 @@ def find_ordinance(name, org=None):
         near = [r.get("자치법규명") for r in data.get("results", [])[:5]]
         return None, "정확 일치 없음. 후보: %s" % ", ".join(near)
     if org:
-        cands = [r for r in cands if (r.get("지자체기관명") or "") == org] or cands
+        same = [r for r in cands if (r.get("지자체기관명") or "") == org]
+        if not same:
+            print("!! --org '%s' 와 일치하는 조례가 없습니다 — 다른 기관(%s)의 동명 조례입니다. "
+                  "현행 조문이 맞는지 반드시 확인하십시오."
+                  % (org, ", ".join(sorted({r.get("지자체기관명") or "?" for r in cands}))),
+                  file=sys.stderr)
+        cands = same or cands
     if len(cands) > 1:
         print("!! 동명 조례 %d건 — %s 선택(--org 로 지정 가능)"
               % (len(cands), cands[0].get("지자체기관명")), file=sys.stderr)
@@ -91,7 +111,9 @@ def fetch_body(mst):
         if not t:
             continue
         # 줄바꿈은 항·호 경계다(law-search 가 넣어 준다). 뭉개면 대비표가 통짜가 된다.
-        out.append({"level": "조", "text": "\n".join(
+        mh = re.match(r"^\s*제\s*\d+\s*([장절관편])(?:\s|$)", t)
+        lv = ("절" if mh.group(1) in "절관" else "장") if mh and "\n" not in t else "조"
+        out.append({"level": lv, "text": "\n".join(
             " ".join(ln.split()) for ln in t.split("\n") if ln.strip())})
     return out, None
 
@@ -103,18 +125,39 @@ def jo_of(text):
     return "%s의%s" % (m.group(1), m.group(2)) if m.group(2) else m.group(1)
 
 
-def build_table_ast(개정문, body, style="dash"):
+def directives_of(개정문):
+    return [(e.get("text") or "").strip() for e in 개정문
+            if ordlaw.is_directive(e.get("text") or "")]
+
+
+def build_table_ast(개정문, body, style="dash", lenient=False):
     """AST 엔진 — 지시문을 편집 연산으로 컴파일해 적용한 뒤, 두 트리를 대비한다.
 
     신설·삭제·조번호 이동이 특별 처리 없이 diff 결과로 나온다.
     실측 골든(경기도의회 21번 일부개정조례안) 대비 행수 16/16, 셀 일치 14/16.
+
+    반환 (rows, errs, warn). errs 는 **실패 목록**이다 — 적용 오류, 해석 불가 절,
+    연산이 하나도 성공하지 못한 지시문(G2 커버리지). 기본(엄격)은 호출자가 errs 가
+    있으면 중단한다. lenient=True 면 실패 자리마다 `[[TODO:적용실패 …]]` 행을 넣어
+    G3 게이트가 빌드를 막게 한다(조용히 빠진 행이 없도록).
     """
     cur = ordlaw.parse(body)
     ops, warn = ordlaw.compile_ops(개정문)
+    errs = []
     if not ops:
-        return None, ["지시문을 하나도 해석하지 못했습니다"], warn
-    new_ast, errs = ordlaw.apply_ops(cur, ops, strict=False)
+        return None, ["지시문을 하나도 해석하지 못했습니다"] + warn, warn
+    new_ast, apply_errs = ordlaw.apply_ops(cur, ops, strict=False)
+    errs += ["적용 오류: %s" % e for e in apply_errs]
+    errs += ["컴파일: %s" % w for w in warn]
+    # G2 — 지시문별 커버리지: 지시문마다 성공한 연산이 하나 이상 있어야 한다
+    ok_src = {getattr(o, "src", None) for o in ops if not getattr(o, "failed", None)}
+    for d in directives_of(개정문):
+        if d not in ok_src:
+            errs.append("G2 미반영 지시문: %s" % d[:80])
     rows = ordlaw.table(cur, new_ast, style=style)
+    if errs and lenient:
+        for e in errs:
+            rows.append(["%s]]" % TODO_FAIL, "%s %s]]" % (TODO_FAIL, e[:90])])
     return rows, errs, warn
 
 
@@ -164,10 +207,11 @@ def build_table(개정문, body):
 
 
 def main():
-    sys.stdout.reconfigure(encoding="utf-8")
     # 게이트 메시지는 stderr 로 나간다. cp949 로 잡히면 한글이 깨져 읽을 수 없고,
     # 읽을 수 없는 차단 메시지는 차단하지 않는 것과 같다.
-    sys.stderr.reconfigure(encoding="utf-8")
+    for st in (sys.stdout, sys.stderr):
+        if hasattr(st, "reconfigure"):
+            st.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("spec")
     ap.add_argument("--조례명", dest="name", help="미지정 시 spec의 현행조례명 사용")
@@ -178,11 +222,15 @@ def main():
                     help="ast=지시문 컴파일(신설·삭제·이동 반영), simple=자구수정만")
     ap.add_argument("--table-style", dest="style", choices=["dash", "full"], default="dash",
                     help="dash=바뀐 부분만 쓰고 나머지는 줄표(실무 관행), full=전문")
+    ap.add_argument("--lenient", action="store_true",
+                    help="지시문 반영 실패가 있어도 계속(실패 자리는 [[TODO:적용실패]] 행 — "
+                         "G3 게이트가 빌드를 막는다). 기본은 엄격: 실패 시 exit 1")
     a = ap.parse_args()
 
     spec = json.loads(Path(a.spec).read_text(encoding="utf-8"))
     name = a.name or spec.get("현행조례명") or re.sub(
-        r"\s*(일부|전부)?개정조례안$", "", spec.get("조례명", "")).strip()
+        r"\s*(?:일부\s*개정|전부\s*개정|개정)\s*(?:조례|규칙)안?$", "",
+        spec.get("조례명", "")).strip()
     if not name:
         raise SystemExit("현행 조례명을 알 수 없습니다 — --조례명 으로 지정하세요.")
 
@@ -201,25 +249,39 @@ def main():
     spec["현행조례"] = body
 
     개정문 = spec.get("개정문") or []
+    try:
+        kind = detect_type(spec.get("조례명", ""), spec.get("유형"))
+    except TypeConflict as e:
+        raise SystemExit(str(e))
+    if kind == "전부개정" and 개정문:
+        print("!! 전부개정 — 개정문이 새 조례 전문이라 지시문 대비표를 만들지 않습니다. "
+              "`대비표`(주요조문 대비표)는 직접 작성하십시오.")
+        개정문 = []
     if 개정문:
         rows = todo = None
         if a.engine == "ast":
-            rows, errs, warn = build_table_ast(개정문, body, a.style)
-            for w in warn:
-                print("   ! 컴파일 경고: %s" % w, file=sys.stderr)
+            rows, errs, warn = build_table_ast(개정문, body, a.style, lenient=a.lenient)
             for e in errs:
-                print("   ! 적용 오류: %s" % e, file=sys.stderr)
+                print("   ! %s" % e, file=sys.stderr)
+            if errs and not a.lenient:
+                # 엄격 모드(기본): 하나라도 반영 못 하면 대비표를 쓰지 않고 중단한다.
+                # 부분 대비표가 OK 로 통과하던 결함(2026-10-12 감사 S8)의 차단점.
+                print("!! 개정 지시문 %d건을 반영하지 못했습니다 — spec 을 저장하지 않고 중단합니다.\n"
+                      "   지시문(조번호·따옴표 안 문구)을 현행 조례와 대조해 고치십시오.\n"
+                      "   초안 회람용으로 실패 자리를 [[TODO:적용실패 …]] 행으로 남기려면 --lenient."
+                      % len(errs), file=sys.stderr)
+                sys.exit(1)
             if rows is None:
-                print("!! AST 엔진 실패 — simple 엔진으로 대체합니다.", file=sys.stderr)
+                if not a.lenient:
+                    sys.exit(1)
+                print("!! AST 엔진 실패 — simple 엔진으로 대체합니다(--lenient).", file=sys.stderr)
         if rows is None:
             rows, todo = build_table(개정문, body)
-
-        directives = [e for e in 개정문
-                      if RE_TARGET.search((e.get("text") or ""))
-                      and (e.get("text") or "").rstrip().endswith("한다.")]
-        if rows and len(rows) < len(directives):
-            print("!! G2 커버리지 경고 — 지시문 %d개 대비 대비표 %d행. 누락 가능."
-                  % (len(directives), len(rows)), file=sys.stderr)
+            if a.engine == "simple":
+                ds = directives_of(개정문)
+                if rows is not None and len(rows) < len(ds):
+                    print("!! G2 커버리지 경고 — 지시문 %d개 대비 대비표 %d행. 누락 가능."
+                          % (len(ds), len(rows)), file=sys.stderr)
         if rows:
             spec["대비표"] = rows
             auto = sum(1 for r in rows if "[[TODO:" not in r[1])

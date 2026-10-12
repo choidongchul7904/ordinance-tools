@@ -1,0 +1,24 @@
+{
+  "skill_name": "law-search",
+  "note": "기준선(2026-08-14 수정): DRF는 1건이면 배열 대신 객체, 노드키 ordin·eflaw→law, detc→Detc. 인용은 조문내용이 아니라 조문원문/항[]. totalCnt>0인데 결과 비면 exit 3.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "지방자치법 제28조 현행 조문 확인해줘",
+      "expected_output": "search --target law로 MST 확보 → law --mst --jo 28 → 조문원문(항·호 펼침)과 공포·시행일자·소관부처. 조문내용(제목만)이 아니라 조문원문 인용.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "경기도 ○○ 조례 현행 전문 가져와",
+      "expected_output": "search --target ordin → law --target ordin --mst → 조례 전문(_ordin_split으로 항·호 분리). 결과 1건일 때도 정상 파싱(객체→리스트 정규화).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "지방대학 및 지역균형인재 육성에 관한 법률 제21조",
+      "expected_output": "2026.2.10. 삭제된 조문임을 현행 조회로 확인해 보고(삭제 조문을 있는 것처럼 인용하지 않음).",
+      "files": []
+    }
+  ]
+}

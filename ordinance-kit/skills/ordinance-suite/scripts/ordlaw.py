@@ -111,7 +111,10 @@ def parse(entries):
     lines = []
     for e in entries:
         t = e["text"] if isinstance(e, dict) else e
-        lines.extend(ln for ln in (t or "").split("\n") if ln.strip())
+        for ln in (t or "").split("\n"):
+            ln = RE_HIST.sub("", ln).rstrip()     # `<개정 2026.7.14.>` 이력 표기는 내용이 아니다
+            if ln.strip():
+                lines.append(ln)
 
     out, jo, stack, cur = [], None, {}, None
     for ln in lines:
@@ -158,6 +161,17 @@ def parse(entries):
         else:                             # 마커 없는 줄 = 앞 노드의 연속행
             cur.text = (cur.text + " " + ln.strip()).strip()
     return out
+
+
+def is_directive(line):
+    """개정 지시문인가 — 신설 본문(조 제목 괄호·항·호·목 마커로 시작)은 아니다.
+    `같은 조 제3항을 …` 처럼 조 번호 없이 시작하는 지시문도 포함한다."""
+    s = (line or "").strip()
+    if not s.endswith("한다."):
+        return False
+    if RE_BODY_JO.match(s) or RE_HANG.match(s) or RE_HO.match(s) or RE_MOK.match(s):
+        return False
+    return bool(RE_JO_REF.search(s)) or s.startswith("같은 ")
 
 
 def index(articles):
@@ -276,6 +290,8 @@ def _targets(clause, last):
     mj = RE_JO_REF.search(clause)
     if mj and not clause.strip().startswith("같은"):
         jo = "%s의%s" % (mj.group(1), mj.group(2)) if mj.group(2) else mj.group(1)
+        # 조를 새로 지칭하면 앞 지시문의 항·호를 물려받지 않는다(줄을 넘긴 오염 방지)
+        last = {"jo": jo}
     if jo is None:
         return [], last
 
@@ -327,23 +343,20 @@ def compile_ops(entries):
             lines.append(t)
 
     ops, warn, i = [], [], 0
+    last = {}                       # `같은 조` 는 앞 줄의 지시문을 가리킬 수 있다 — 줄을 넘겨 유지
     while i < len(lines):
         line = lines[i]
         i += 1
-        if RE_BODY_JO.match(line) or RE_HANG.match(line) or RE_HO.match(line):
+        if not is_directive(line):
             continue            # `제18조의2(…) ① …` 는 신설 본문이지 지시문이 아니다
-        if not RE_JO_REF.search(line) or not line.rstrip().endswith("한다."):
-            continue                                   # 지시문이 아니다(본문은 아래서 흡수)
+        src = line
         body = []
         if "다음과 같이" in line:                       # 뒤따르는 문단이 인자
-            while i < len(lines) and not (
-                    not (RE_BODY_JO.match(lines[i]) or RE_HANG.match(lines[i])
-                         or RE_HO.match(lines[i]))
-                    and RE_JO_REF.search(lines[i]) and lines[i].rstrip().endswith("한다.")):
+            while i < len(lines) and not is_directive(lines[i]):
                 body.append(lines[i])
                 i += 1
+        n_before = len(ops)
 
-        last = {}
         for clause in SPLIT_CLAUSE.split(line):
             clause = clause.strip()
             if not clause:
@@ -386,17 +399,19 @@ def compile_ops(entries):
                 mh = RE_HANG_REF.search(clause)
                 ops.append(Op("PROMOTE", jo=tgts[0][0], hang=int(mh.group(1)) if mh else 1))
             elif "신설" in clause:
-                ops.append(Op("INSERT", jo=tgts[0][0], body=body))
+                ops.append(Op("INSERT", jo=tgts[0][0], target=tgts[0], body=body))
             elif "삭제" in clause:
                 for t in tgts:
                     ops.append(Op("DELETE", target=t))
-            elif "다음과 같이" in clause:                # 전문 개정
-                ops.append(Op("REWRITE", jo=tgts[0][0], body=body))
+            elif "다음과 같이" in clause:                # 전문 개정 — 조·항·호 단위
+                ops.append(Op("REWRITE", jo=tgts[0][0], target=tgts[0], body=body))
             elif pairs:
                 for t in tgts:
                     ops.append(Op("REPLACE", target=t, pairs=pairs))
             else:
                 warn.append("해석 불가: %s" % clause[:60])
+        for op in ops[n_before:]:
+            op.src = src                               # G2: 지시문별 커버리지 판정용
     return ops, warn
 
 
@@ -534,7 +549,7 @@ def apply_ops(articles, ops, strict=True):
                         jo.title = b.strip("()")
                     elif a in t:
                         jo.title = t.replace(a, b).strip("()")
-                    elif strict:
+                    else:
                         raise ApplyError("제%s조 제목 불일치: “%s”" % (op.jo, a))
 
             elif op.kind == "PROMOTE":
@@ -564,28 +579,40 @@ def apply_ops(articles, ops, strict=True):
                     new.insert(pos, jo)
 
             elif op.kind in ("INSERT", "REWRITE"):
-                jo = index(new).get(op.jo)
+                tgt = getattr(op, "target", None) or (op.jo, None, None, None)
+                if str(tgt[0]).startswith("former:"):
+                    jo = resolve((tgt[0], None, None, None))
+                else:
+                    jo = index(new).get(op.jo)
                 if jo is None and op.kind == "INSERT":
                     op.kind = "INSERT_JO"      # 현행에 없는 조 = 조 자체의 신설
                     ops.append(op)             # 뒤에서 다시 처리
                     continue
                 if jo is None:
                     raise ApplyError("제%s조를 찾을 수 없습니다" % op.jo)
-                kids = parse_children(op.body, jo)
-                if op.kind == "REWRITE":
+                if not [ln for ln in op.body if (ln or "").strip()]:
+                    raise ApplyError("제%s조 %s 본문(다음과 같이 …의 내용)이 없습니다"
+                                     % (op.jo, "신설" if op.kind == "INSERT" else "개정"))
+                _, hang, ho, _ = tgt
+                if op.kind == "REWRITE" and (hang or ho):
+                    _rewrite_part(jo, hang, ho, op.body)      # 항·호 단위 전문개정 — 그 항만 교체
+                elif op.kind == "REWRITE":
+                    kids = parse_children(op.body, jo)
                     head = parse(op.body)      # 본문에 새 조 머리(제목)가 들어 있다
                     if head and head[0].num == jo.num:
                         jo.title, jo.text = head[0].title, head[0].text
                         jo.children = head[0].children
+                        for c in jo.children:
+                            c.parent = jo
                     else:
                         jo.children = kids
                     jo.rewritten = True        # 조 전체가 갈렸다 → 대비표에서 1행으로
                 else:
-                    jo.children.extend(kids)
-                    jo.children.sort(key=lambda c: (c.level != "항", c.num or 0))
+                    _insert_part(jo, hang, ho, op.body)
             else:
                 raise ApplyError("모르는 연산: %s" % op.kind)
         except ApplyError as e:
+            op.failed = str(e)
             if strict:
                 raise
             errs.append("%s — %s" % (op.kind, e))
@@ -593,23 +620,87 @@ def apply_ops(articles, ops, strict=True):
     return new, errs
 
 
+LEVEL_RANK = {"항": 0, "호": 1, "목": 2}
+
+
+def _sort_kids(node):
+    node.children.sort(key=lambda c: (LEVEL_RANK.get(c.level, 9), c.num or 0))
+
+
+def _rewrite_part(jo, hang, ho, body):
+    """`제3조제2항을 다음과 같이 한다` — 지정한 항(호)만 새 본문으로 바꾼다.
+    노드 ID를 유지해 대비표에서 같은 행의 좌우로 짝지어지게 한다."""
+    node = jo.find("항", hang) if hang else jo
+    if node is None:
+        raise ApplyError("제%s조제%d항이 없습니다" % (jo.num, hang))
+    if ho:
+        node = node.find("호", ho) or jo.find("호", ho)
+        if node is None:
+            raise ApplyError("제%s조 제%d호가 없습니다" % (jo.num, ho))
+    new = parse_children(body, node.parent or jo)
+    same = [n for n in new if n.level == node.level]
+    if not same:
+        raise ApplyError("제%s조 %s 개정 본문에 %s 마커가 없습니다"
+                         % (jo.num, node.marker, node.level))
+    rep = same[0]
+    node.text = rep.text
+    node.children = rep.children
+    for c in node.children:
+        c.parent = node
+
+
+def _insert_part(jo, hang, ho, body):
+    """신설 본문(항·호·목)을 올바른 부모 아래에 넣는다.
+    항 → 조, 호 → 지정 항(없으면 조), 목 → 지정 호."""
+    hang_node = jo.find("항", hang) if hang else None
+    if hang and hang_node is None and not any(
+            RE_HANG.match((ln or "").strip()) for ln in body):
+        raise ApplyError("제%s조제%d항이 없습니다" % (jo.num, hang))
+    kids = parse_children(body, jo)
+    if not kids:
+        raise ApplyError("제%s조 신설 본문에서 항·호·목을 찾지 못했습니다" % jo.num)
+    touched = set()
+    for k in kids:
+        if k.level == "항":
+            parent = jo
+        elif k.level == "호":
+            parent = hang_node or jo
+        else:                                         # 목
+            base = hang_node or jo
+            parent = base.find("호", ho) if ho else None
+            if parent is None:
+                raise ApplyError("제%s조 목 신설 — 소속 호(제%s호)를 찾을 수 없습니다"
+                                 % (jo.num, ho))
+        k.parent = parent
+        parent.children.append(k)
+        touched.add(id(parent))
+        _sort_kids(parent)
+
+
 def parse_children(body_lines, parent):
     """신설 본문 줄들 → 자식 Node 목록 (항·호)."""
-    out, cur = [], None
+    out, cur, ho_cur, last = [], None, None, None
     for ln in body_lines:
         ln = (ln or "").strip()
         if not ln:
             continue
-        mh, mo = RE_HANG.match(ln), RE_HO.match(ln)
+        mh, mo, mk = RE_HANG.match(ln), RE_HO.match(ln), RE_MOK.match(ln)
         if mh:
             cur = Node("항", HANG_NUM[mh.group(1)], text=ln[mh.end():].strip(), parent=parent)
             out.append(cur)
+            ho_cur, last = None, cur
         elif mo:
             p = cur or parent
             n = Node("호", int(mo.group(1)), text=ln[mo.end():].strip(), parent=p)
             (p.children if p is not parent else out).append(n)
-        elif out:
-            out[-1].text = (out[-1].text + " " + ln).strip()
+            ho_cur, last = n, n
+        elif mk:
+            p = ho_cur or cur or parent
+            n = Node("목", mk.group(1), text=ln[mk.end():].strip(), parent=p)
+            (p.children if p is not parent else out).append(n)
+            last = n
+        elif last is not None:
+            last.text = (last.text + " " + ln).strip()
     return out
 
 
@@ -726,8 +817,12 @@ def table(cur_arts, new_arts, style="dash"):
         hangs_a = [c for c in a.children if c.level == "항"]
         hangs_b = [c for c in b.children if c.level == "항"]
 
-        if not hangs_a and not hangs_b:               # 항이 없는 조 = 조 전체가 1행
-            rows.append([a.line(), dash_node(a, b) if style == "dash" else b.line()])
+        if not hangs_a and not hangs_b:               # 항이 없는 조 = 조 머리 1행 + 호 행
+            if a.line() == b.line():                  # 각 호 외의 부분 무변경
+                rows.append([a.marker + " " + OMIT_L, b.marker + " " + OMIT_R])
+            else:
+                rows.append([a.line(), dash_node(a, b) if style == "dash" else b.line()])
+            rows.extend(_child_rows(a, b, style))
             continue
 
         bmap = {c.id: c for c in hangs_b}
@@ -823,10 +918,30 @@ def _child_rows(ha, hb, style):
             i = j + 1
             continue
         out.append([ka.line(), dash_node(ka, kb) if style == "dash" else kb.line()])
+        out.extend(_mok_rows(ka, kb, style))
         i += 1
     for kb in [c for c in hb.children if c.level == "호"]:
         if kb.id not in seen:
-            out.append([NEW_L, kb.line()])
+            out.append([NEW_L, kb.render()])
+    return out
+
+
+def _mok_rows(ka, kb, style):
+    """호 아래 목(目) 행 — 변경·신설·삭제된 목만 싣는다."""
+    out = []
+    am = {c.id: c for c in ka.children if c.level == "목"}
+    bm = {c.id: c for c in kb.children if c.level == "목"}
+    for c in ka.children:
+        if c.level != "목":
+            continue
+        d = bm.get(c.id)
+        if d is None:
+            out.append([c.line(), DEL_R])
+        elif c.line() != d.line():
+            out.append([c.line(), dash_node(c, d) if style == "dash" else d.line()])
+    for d in kb.children:
+        if d.level == "목" and d.id not in am:
+            out.append([NEW_L, d.line()])
     return out
 
 

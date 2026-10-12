@@ -18,8 +18,12 @@ config.json:
       "대표발의": "홍길동",
       "제목":     "발의의원 서명부",          # 선택, 기본값 그대로
       "pages":    3,                          # 선택, 미지정 시 인원수로 자동 산정
-      "members": [ {"소속": "수원1", "성명": "김철수"}, "성남2|이영희" ]
+      "members": [ {"소속": "수원1", "성명": "김철수"}, "성남2|이영희", "박민수" ],
+      "lead_in_list": false                   # 선택, true면 대표발의를 1번에 한 번만 둔다
     }
+
+    "박민수"처럼 `|` 없는 문자열은 성명(소속 공란)이다. 같은 성명은 한 번만 싣고,
+    대표발의 의원이 명단에 있으면 경고 후 뺀다(lead_in_list=true면 1번 자리로).
 """
 import argparse
 import json
@@ -87,16 +91,55 @@ def set_para_text(p, slot, text):
 
 
 def normalize_members(raw):
+    """members → [(소속, 성명)].
+
+    문자열은 `"소속|성명"`. **`|` 가 없으면 성명만 준 것**으로 보고 소속은 비운다
+    (2026-10-12 감사: 이름만 주면 소속 열에 찍히던 결함)."""
     out = []
     for m in raw or []:
         if isinstance(m, str):
-            parts = [x.strip() for x in m.split("|")]
-            org, name = (parts + ["", ""])[:2]
+            if "|" in m:
+                parts = [x.strip() for x in m.split("|")]
+                org, name = (parts + ["", ""])[:2]
+            else:
+                org, name = "", m.strip()
         else:
             org = (m.get("소속") or m.get("org") or "").strip()
             name = (m.get("성명") or m.get("의원명") or m.get("name") or "").strip()
+        if not org and not name:
+            continue
         out.append((org, name))
     return out
+
+
+def dedupe_members(members, lead, lead_in_list=False):
+    """같은 의원이 두 번 들어가지 않게 한다. 경고 목록을 함께 돌려준다.
+
+    - 성명이 같은 항목이 여럿이면 첫 항목만 남긴다.
+    - 대표발의 의원이 명단에 있으면: lead_in_list=False(기본)면 빼고 경고한다 —
+      `members`/`공동발의`는 공동발의자 명단이기 때문이다. True면 1번 자리에 한 번만
+      둔다(대표발의를 서명부 1번으로 시작하는 관행).
+    """
+    warns, seen, out = [], set(), []
+    for org, name in members:
+        key = name.replace(" ", "")
+        if key and key in seen:
+            warns.append("중복 의원 제외: %s" % name)
+            continue
+        if key:
+            seen.add(key)
+        out.append((org, name))
+    lk = (lead or "").replace(" ", "")
+    if lk:
+        hit = [m for m in out if m[1].replace(" ", "") == lk]
+        if lead_in_list:
+            rest = [m for m in out if m[1].replace(" ", "") != lk]
+            out = [hit[0] if hit else ("", lead)] + rest
+        elif hit:
+            warns.append("대표발의 의원(%s)이 공동발의 명단에도 있어 명단에서 뺐습니다 "
+                         "(서명부 1번에 넣으려면 \"lead_in_list\": true)" % lead)
+            out = [m for m in out if m[1].replace(" ", "") != lk]
+    return out, warns
 
 
 # ---------------------------------------------------------------- 본 처리
@@ -114,7 +157,11 @@ def build(cfg, template, out_path):
     if len(sec) != BLOCK_LEN * 2:
         raise SystemExit("서식 구조가 예상과 다름: 문단 %d개 (기대 12개)" % len(sec))
 
-    members = normalize_members(cfg.get("members"))
+    lead = cfg.get("대표발의") or cfg.get("lead") or ""
+    members, warns = dedupe_members(normalize_members(cfg.get("members")), lead,
+                                    bool(cfg.get("lead_in_list") or cfg.get("대표발의_명단포함")))
+    for w in warns:
+        print("!! %s" % w)
     pages = cfg.get("pages")
     if not pages:
         pages = max(1, math.ceil(len(members) / ROWS_PER_PAGE)) if members else 2
@@ -146,7 +193,6 @@ def build(cfg, template, out_path):
         seen.add(tbl.get("id"))
 
     agenda = cfg.get("안건명") or cfg.get("agenda") or ""
-    lead = cfg.get("대표발의") or cfg.get("lead") or ""
     title = cfg.get("제목") or cfg.get("title") or "발의의원 서명부"
 
     blocks = [list(sec)[i:i + BLOCK_LEN] for i in range(0, len(sec), BLOCK_LEN)]
@@ -160,6 +206,8 @@ def build(cfg, template, out_path):
         for ri, tr in enumerate(blk[5].find(".//" + Q("tbl")).findall(Q("tr"))[1:]):
             idx = pi * ROWS_PER_PAGE + ri
             cells = tr.findall(Q("tc"))
+            # 연번은 빈 행에도 찍는다 — 원본 양식(7. 안건 서명부_양식.hwpx)이 빈 서명부에
+            # 1~15·16~30을 미리 인쇄해 두는 관행이다(손서명 추가분을 받는 칸).
             set_cell_text(cells[COL_NO], str(idx + 1))
             org, name = members[idx] if idx < len(members) else ("", "")
             set_cell_text(cells[COL_ORG], org)

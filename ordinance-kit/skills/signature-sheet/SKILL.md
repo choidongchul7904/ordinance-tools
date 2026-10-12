@@ -1,7 +1,13 @@
 ---
 name: signature-sheet
-description: 지방의회 안건 서명부(발의의원 서명부) HWPX 작성 스킬. 내장 공식 양식(연번·소속·의원명·서명 4열, 쪽당 15명)에 안건명·대표발의 의원·공동발의 의원 명단을 채우고, 인원수에 맞춰 쪽을 자동 증감(15명 단위)해 제출용 HWPX를 산출한다. 서명란은 손서명용으로 항상 비워 둔다. 사용자가 "서명부", "안건 서명부", "발의의원 서명부", "공동발의 서명부", "서명부 만들어줘", "서명부 양식 채워줘", "발의 서명 받을 서류", "연서부"를 언급하거나 조례안·안건 파일을 첨부하며 발의 서명 문서를 요청하면 반드시 이 스킬을 사용한다. [배타] 조례 조문 자체를 만드는 것은 ordinance-draft, 조례 검토는 ordinance-review, 조례 표준 입안 서식 조판은 ordinance-format, 입법예고 의뢰서는 ipbeop-yego, 서식과 무관한 일반 한글 문서는 new-hwpx-master-v2 — 이 스킬은 발의 서명을 받는 서명부 서식 채우기 전용이다.
+description: 지방의회 안건 서명부(발의의원 서명부) HWPX 작성. 내장 공식 양식(연번·소속·의원명·서명 4열, 쪽당 15명)에 안건명·대표발의·공동발의 명단을 채우고 인원수에 맞춰 쪽을 자동 증감해 제출용 HWPX를 만든다. 서명란은 손서명용으로 항상 비운다.
+when_to_use: '"서명부", "안건 서명부", "발의의원 서명부", "공동발의 서명부", "서명부 만들어줘", "발의 서명 받을 서류", "연서부"를 말하거나 조례안·안건 파일을 첨부하며 발의 서명 문서를 요청할 때 반드시 사용. 표준 서식은 ordinance-format, 입법예고는 ipbeop-yego.'
+argument-hint: '[안건명] [대표발의·공동발의 명단]'
 ---
+> 스킬 폴더: `${CLAUDE_SKILL_DIR}` — 본문의 `scripts/`·`references/`·`assets/` 상대경로는 이 폴더 기준이다.
+
+
+<!-- govern-gate: exempt — 서명부 서식 채우기 전용 -->
 
 # 안건 서명부(발의의원 서명부) 작성
 
@@ -59,18 +65,25 @@ description: 지방의회 안건 서명부(발의의원 서명부) HWPX 작성 �
 ```
 
 `members`는 객체(`소속`/`성명`) 또는 `"소속|성명"` 문자열을 섞어 쓸 수 있다.
-`pages`를 넣으면 쪽수를 강제한다.
+`|` 없는 문자열(`"김철수"`)은 **성명**이다(소속 공란). `pages`를 넣으면 쪽수를 강제한다.
+
+- 같은 성명은 한 번만 싣고 경고한다.
+- 대표발의 의원이 `members`에도 있으면 경고 후 명단에서 뺀다(`members`는 공동발의 명단).
+  서명부 1번을 대표발의로 시작하는 관행이면 `"lead_in_list": true` — 1번 자리에 한 번만 둔다.
+- 연번은 **빈 행에도 찍힌다** — 원본 양식이 빈 서명부에 1~15·16~30을 미리 인쇄해 두는 관행이라 그대로 따른다.
+
+회귀 테스트(COM 없음): `python "${CLAUDE_SKILL_DIR}/tests/test_sheet.py"`.
 
 2. 스테이징 HWPX 생성:
 
 ```bash
-python "scripts/build_sheet.py" cfg.json stage.hwpx
+python "${CLAUDE_SKILL_DIR}/scripts/build_sheet.py" cfg.json stage.hwpx
 ```
 
 3. 한/글 COM 정품 재저장 + 검증 PDF:
 
 ```bash
-python "scripts/com_save.py" stage.hwpx "출력폴더/발의의원 서명부_○○_260807.hwpx" verify.pdf
+python "${CLAUDE_SKILL_DIR}/scripts/com_save.py" stage.hwpx "출력폴더/발의의원 서명부_○○_260807.hwpx" verify.pdf
 ```
 
 `com_save.py` 없이 스테이징본을 그대로 전달하면 **한/글 보안수준 '높음'에서 변조
